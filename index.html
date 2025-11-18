@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BASE SNIPER</title>
+
+    <!-- REQUIRED: Farcade SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@farcade/game-sdk@latest/dist/index.min.js"></script>
+
+    <style>
+        :root {
+            --bg: #0D0F19;
+            --neon: #4FC3FF;
+            --text: #FFFFFF;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Center the canvas and ensure mobile-first portrait fit */
+        .wrap {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        /* Top UI overlay */
+        .hud {
+            position: absolute;
+            top: env(safe-area-inset-top, 0px);
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 14px;
+            pointer-events: none; /* clicks go to canvas */
+        }
+        .score {
+            font-weight: 700;
+            font-size: 18px;
+            text-shadow: 0 0 8px rgba(79,195,255,0.5);
+        }
+        .mute {
+            pointer-events: auto; /* allow toggling if needed */
+            user-select: none;
+            font-size: 18px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.06);
+            box-shadow: inset 0 0 0 1px rgba(79,195,255,0.2);
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--neon);
+            box-shadow: 0 0 8px var(--neon), 0 0 16px rgba(79,195,255,0.4);
+        }
+        /* Game Over overlay */
+        .overlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            background: rgba(13,15,25,0.65);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+            text-align: center;
+            padding: 24px;
+        }
+        .overlay.show { display: flex; }
+        .title {
+            font-size: 32px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+            color: var(--text);
+            text-shadow: 0 0 12px rgba(79,195,255,0.75);
+        }
+        .subtitle {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .btn-restart {
+            margin-top: 18px;
+            padding: 12px 18px;
+            font-size: 16px;
+            font-weight: 700;
+            border: none;
+            border-radius: 10px;
+            color: var(--bg);
+            background: var(--neon);
+            box-shadow: 0 0 10px rgba(79,195,255,0.75), 0 0 24px rgba(79,195,255,0.35);
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <canvas id="game"></canvas>
+        <div class="hud">
+            <div id="scoreLabel" class="score">Score: 0</div>
+            <div id="muteLabel" class="mute" aria-label="Mute state">
+                <div class="dot" id="muteDot"></div>
+                <span id="muteText">Sound On</span>
+            </div>
+        </div>
+        <div id="overlay" class="overlay" role="dialog" aria-modal="true">
+            <div class="title" id="overlayTitle">Tap to Start</div>
+            <div class="subtitle" id="overlaySubtitle">Hit when the pointer is inside the glowing arc</div>
+            <button class="btn-restart" id="overlayBtn">Tap to Start</button>
+        </div>
+    </div>
+
+    <!-- Game Config -->
+    <script id="game-config" type="application/json">
+    {
+        "colors": {
+            "background": "#0D0F19",
+            "neon": "#4FC3FF",
+            "text": "#FFFFFF"
+        },
+        "gameplay": {
+            "initialSpeed": 0.03,
+            "speedIncrement": 0.01,
+            "initialArcDegrees": 30,
+            "arcShrinkPerHit": 1.5,
+            "minArcDegrees": 12,
+            "outerRadiusRatio": 0.32,
+            "innerRadiusRatio": 0.28
+        },
+        "ui": {
+            "glow": true
+        },
+        "_meta": {
+            "colors.background": {"type": "color", "label": "Background Color"},
+            "colors.neon": {"type": "color", "label": "Neon Color"},
+            "colors.text": {"type": "color", "label": "Text Color"},
+            "gameplay.initialSpeed": {"type": "number", "label": "Initial Speed (rad/frame)", "min": 0.005, "max": 0.2, "step": 0.005},
+            "gameplay.speedIncrement": {"type": "number", "label": "Speed Increment", "min": 0.001, "max": 0.05, "step": 0.001},
+            "gameplay.initialArcDegrees": {"type": "number", "label": "Initial Arc (deg)", "min": 8, "max": 90, "step": 1},
+            "gameplay.arcShrinkPerHit": {"type": "number", "label": "Arc Shrink per Hit (deg)", "min": 0, "max": 5, "step": 0.1},
+            "gameplay.minArcDegrees": {"type": "number", "label": "Minimum Arc (deg)", "min": 6, "max": 45, "step": 1},
+            "gameplay.outerRadiusRatio": {"type": "number", "label": "Outer Radius Ratio", "min": 0.2, "max": 0.48, "step": 0.01},
+            "gameplay.innerRadiusRatio": {"type": "number", "label": "Inner Radius Ratio", "min": 0.1, "max": 0.45, "step": 0.01},
+            "ui.glow": {"type": "boolean", "label": "Enable Glow"}
+        }
+    }
+    </script>
+
+    <!-- Optional assets block (kept minimal for theme extensibility) -->
+    <script id="game-assets" type="application/json">
+    {
+        "sounds": {
+            "hit": "https://remix.gg/blob/0d3413f6-d3b4-48d0-92c9-53f0cff290c6/her%20yeni%20skor-PrXgRCmjBHY5r4YpmfayV9kCZkBBi7.mp3?k0eE",
+            "miss": "https://remix.gg/blob/0d3413f6-d3b4-48d0-92c9-53f0cff290c6/game%20over-g2V1wDE6hVofJf1a706t70PpEaLPOl.mp3?dJdb",
+            "music": "https://remix.gg/blob/0d3413f6-d3b4-48d0-92c9-53f0cff290c6/oyun%20i%C3%A7i%20m%C3%BCzik-XzDG3af9pApKZtwduuhEiRSmKMkLJW.mp3?Wx60"
+        },
+        "_meta": {
+            "sounds.hit": {"label": "Hit Sound", "category": "Sound Effects"},
+            "sounds.miss": {"label": "Miss Sound", "category": "Sound Effects"},
+            "sounds.music": {"label": "Background Music", "category": "Music"}
+        }
+    }
+    </script>
+
+    <script>
+        // Global State
+        let canvas, ctx;
+        let W = 400, H = 600; // internal logical size; scaled to fit
+
+        // Config and assets
+        let CONFIG = {};
+        let ASSETS = {};
+        const loadedSounds = { hit: null, miss: null, music: null };
+
+        // Game state
+        let running = false;
+        let gameOver = false;
+        let muted = false;
+        let score = 0;
+
+        // Pointer & Target
+        let angle = 0; // current pointer angle (radians)
+        let speed = 0.03; // radians per frame
+        let targetStart = 0; // radians
+        let targetSize = degToRad(30); // radians
+
+        // UI Elements
+        const $ = (s) => document.querySelector(s);
+        let overlayEl, overlayTitleEl, overlaySubtitleEl, overlayBtnEl, scoreLabelEl, muteTextEl, muteDotEl;
+
+        // Utilities
+        function degToRad(d) { return d * Math.PI / 180; }
+        function randFloat(a, b) { return a + Math.random() * (b - a); }
+        function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+        function initConfig() {
+            try {
+                CONFIG = JSON.parse(document.getElementById('game-config').textContent);
+            } catch (e) {
+                CONFIG = {
+                    colors: { background: '#0D0F19', neon: '#4FC3FF', text: '#FFFFFF' },
+                    gameplay: { initialSpeed: 0.03, speedIncrement: 0.01, initialArcDegrees: 30, arcShrinkPerHit: 1.5, minArcDegrees: 12, outerRadiusRatio: 0.32, innerRadiusRatio: 0.28 },
+                    ui: { glow: true }
+                };
+            }
+            document.body.style.backgroundColor = CONFIG.colors.background;
+        }
+
+        function initAssets() {
+            try {
+                ASSETS = JSON.parse(document.getElementById('game-assets').textContent);
+            } catch(e) {
+                ASSETS = { sounds: {} };
+            }
+            if (ASSETS.sounds?.hit) {
+                loadedSounds.hit = new Audio(ASSETS.sounds.hit);
+            }
+            if (ASSETS.sounds?.miss) {
+                loadedSounds.miss = new Audio(ASSETS.sounds.miss);
+            }
+            if (ASSETS.sounds?.music) {
+                loadedSounds.music = new Audio(ASSETS.sounds.music);
+                loadedSounds.music.loop = true;
+            }
+            // Live asset updates (optional editor hook)
+            window.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'UPDATE_ASSETS') {
+                    ASSETS = event.data.assets || ASSETS;
+                    if (ASSETS.sounds?.hit) {
+                        if (!loadedSounds.hit) loadedSounds.hit = new Audio();
+                        loadedSounds.hit.src = ASSETS.sounds.hit;
+                    }
+                    if (ASSETS.sounds?.miss) {
+                        if (!loadedSounds.miss) loadedSounds.miss = new Audio();
+                        loadedSounds.miss.src = ASSETS.sounds.miss;
+                    }
+                    if (ASSETS.sounds?.music) {
+                        if (!loadedSounds.music) loadedSounds.music = new Audio();
+                        loadedSounds.music.src = ASSETS.sounds.music;
+                        loadedSounds.music.loop = true;
+                    }
+                }
+            });
+        }
+
+        function setMuted(isMuted) {
+            muted = !!isMuted;
+            muteTextEl.textContent = muted ? 'Sound Off' : 'Sound On';
+            muteDotEl.style.opacity = muted ? '0.35' : '1';
+            // Apply to audio elements
+            ['hit','miss','music'].forEach((k) => {
+                if (loadedSounds[k]) loadedSounds[k].muted = muted;
+            });
+            // If unmuted while running, ensure music is playing
+            if (!muted && running && loadedSounds.music) {
+                try { loadedSounds.music.play(); } catch(e) {}
+            }
+        }
+
+        function layoutCanvas() {
+            // Use 2:3 base internal size, then scale to fit parent
+            const parent = document.querySelector('.wrap');
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const w = parent.clientWidth;
+            const h = parent.clientHeight;
+            // Maintain 2:3 internal logical size (400x600) but scale to device
+            canvas.width = Math.floor(W * dpr);
+            canvas.height = Math.floor(H * dpr);
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        function resetTarget() {
+            const arcDeg = CONFIG.gameplay.initialArcDegrees;
+            targetSize = degToRad(arcDeg);
+            targetStart = randFloat(0, Math.PI * 2);
+        }
+
+        function randomizeTargetPosition() {
+            targetStart = randFloat(0, Math.PI * 2);
+        }
+
+        function resetGame() {
+            score = 0;
+            angle = 0;
+            speed = CONFIG.gameplay.initialSpeed;
+            resetTarget();
+            setOverlay(false);
+            running = true;
+            gameOver = false;
+            scoreLabelEl.textContent = 'Score: ' + score;
+            // Start background music on user gesture
+            if (loadedSounds.music) {
+                try { loadedSounds.music.currentTime = 0; if (!muted) loadedSounds.music.play(); } catch(e) {}
+            }
+            requestAnimationFrame(loop);
+        }
+
+        function gameOverNow() {
+            if (gameOver) return;
+            running = false;
+            gameOver = true;
+            // Send final score to Farcade
+            try {
+                window.FarcadeSDK.singlePlayer.actions.gameOver({ score: score });
+            } catch(e) {}
+            overlayTitleEl.textContent = 'Game Over';
+            overlaySubtitleEl.textContent = 'Score: ' + score;
+            overlayBtnEl.textContent = 'Tap to Restart';
+            setOverlay(true);
+            // stop background music
+            if (loadedSounds.music) { try { loadedSounds.music.pause(); } catch(e) {} }
+            // play miss sound if available
+            if (!muted && loadedSounds.miss) {
+                try { loadedSounds.miss.currentTime = 0; loadedSounds.miss.play(); } catch(e) {}
+            }
+        }
+
+        function setOverlay(show) {
+            overlayEl.classList.toggle('show', !!show);
+        }
+
+        function handleTap() {
+            if (!running) {
+                // Start or restart through overlay tap
+                resetGame();
+                return;
+            }
+            const inArc = isPointerInsideTarget();
+            if (inArc) {
+                // Hit
+                score += 1;
+                scoreLabelEl.textContent = 'Score: ' + score;
+                speed += CONFIG.gameplay.speedIncrement;
+                // shrink arc slightly (difficulty up)
+                const minArc = degToRad(CONFIG.gameplay.minArcDegrees);
+                targetSize = clamp(targetSize - degToRad(CONFIG.gameplay.arcShrinkPerHit), minArc, degToRad(360));
+                randomizeTargetPosition();
+                // haptic effect (Farcade)
+                try { window.FarcadeSDK.singlePlayer.actions.hapticFeedback(); } catch(e) {}
+                // play hit sound if available
+                if (!muted && loadedSounds.hit) {
+                    try { loadedSounds.hit.currentTime = 0; loadedSounds.hit.play(); } catch(e) {}
+                }
+            } else {
+                // Miss → Game Over
+                gameOverNow();
+            }
+        }
+
+        function isPointerInsideTarget() {
+            // Normalize angles to [0, 2PI)
+            const a = ((angle % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+            const start = ((targetStart % (Math.PI*2)) + Math.PI*2) % (Math.PI*2);
+            const end = (start + targetSize) % (Math.PI*2);
+            if (targetSize >= Math.PI*2) return true;
+            if (start < end) {
+                return a >= start && a <= end;
+            } else {
+                // Wrapped around 2π
+                return a >= start || a <= end;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, W, H);
+            ctx.fillStyle = CONFIG.colors.background;
+            ctx.fillRect(0, 0, W, H);
+
+            const cx = W/2;
+            const cy = H/2;
+
+            const rOuter = Math.min(W, H) * 0.32;
+            const rInner = Math.min(W, H) * 0.28;
+
+            const neon = CONFIG.colors.neon;
+            const glow = CONFIG.ui.glow;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+
+            // TARGET ARC
+            ctx.beginPath();
+            ctx.lineWidth = 10;
+            ctx.lineCap = "round";
+            ctx.strokeStyle = neon;
+            if (glow) {
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = neon;
+            }
+            ctx.arc(0, 0, (rOuter + rInner)/2, targetStart, targetStart + targetSize);
+            ctx.stroke();
+
+            // POINTER
+            const pointerLen = rOuter + 20;
+            const px = Math.cos(angle) * pointerLen;
+            const py = Math.sin(angle) * pointerLen;
+
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(px, py);
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = neon;
+            if (glow) {
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = neon;
+            }
+            ctx.stroke();
+
+            // CENTER DOT
+            ctx.beginPath();
+            ctx.arc(0, 0, 6, 0, Math.PI*2);
+            ctx.fillStyle = neon;
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function update() {
+            angle += speed;
+            const twoPi = Math.PI * 2;
+            if (angle >= twoPi) angle -= twoPi;
+        }
+
+        function loop() {
+            if (!running) return;
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        function bindInput() {
+            // Pointer/tap controls
+            canvas.addEventListener('click', handleTap);
+            canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleTap(); }, { passive: false });
+
+            // Overlay button
+            overlayBtnEl.addEventListener('click', (e) => { e.stopPropagation(); handleTap(); });
+        }
+
+        function init() {
+            initConfig();
+            initAssets();
+
+            canvas = document.getElementById('game');
+            ctx = canvas.getContext('2d');
+
+            overlayEl = document.getElementById('overlay');
+            overlayTitleEl = document.getElementById('overlayTitle');
+            overlaySubtitleEl = document.getElementById('overlaySubtitle');
+            overlayBtnEl = document.getElementById('overlayBtn');
+            scoreLabelEl = document.getElementById('scoreLabel');
+            muteTextEl = document.getElementById('muteText');
+            muteDotEl = document.getElementById('muteDot');
+
+            layoutCanvas();
+            window.addEventListener('resize', layoutCanvas);
+
+            // Initial state
+            running = false;
+            gameOver = false;
+            score = 0;
+            setOverlay(true);
+            overlayTitleEl.textContent = 'Tap to Start';
+            overlaySubtitleEl.textContent = 'Hit when the pointer is inside the glowing arc';
+            overlayBtnEl.textContent = 'Tap to Start';
+            scoreLabelEl.textContent = 'Score: 0';
+
+            bindInput();
+
+            // Farcade event listeners
+            try {
+                window.FarcadeSDK.on('play_again', resetGame);
+                window.FarcadeSDK.on('toggle_mute', (data) => setMuted(data.isMuted));
+            } catch(e) {}
+
+            // REQUIRED: Signal game is ready
+            try { window.FarcadeSDK.singlePlayer.actions.ready(); } catch(e) {}
+
+            // Draw initial frame
+            draw();
+        }
+
+        // Optional config live update hook
+        window.onConfigUpdate = (config) => {
+            CONFIG = config;
+            document.body.style.backgroundColor = CONFIG.colors.background;
+            // adjust UI text color via HUD inherits from body color; canvas uses draw colors directly
+            // also ensure arc constraints remain valid
+            const minArc = degToRad(CONFIG.gameplay.minArcDegrees);
+            targetSize = clamp(targetSize, minArc, Math.PI * 2);
+        };
+
+        // Expose setMuted for Farcade listener
+        window.setMuted = setMuted;
+        window.resetGame = resetGame;
+
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
